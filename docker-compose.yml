@@ -1,0 +1,55 @@
+version: "3"
+services:
+  napcat:
+    extra_hosts:
+      # 将 host.docker.internal 解析到宿主机，使容器内可以访问宿主机上运行的 NoneBot
+      # macOS/Windows Docker Desktop 已内置此解析，此配置主要用于 Linux 兼容
+      - "host.docker.internal:host-gateway"
+    environment:
+      - NAPCAT_UID=${NAPCAT_UID:-1000}
+      - NAPCAT_GID=${NAPCAT_GID:-1000}
+      - MODE=astrbot
+    ports:
+      - 3000:3000
+      - 3001:3001
+      - 6099:6099
+    container_name: napcat
+    restart: always
+    image: mlikiowa/napcat-docker:latest
+    volumes:
+      - napcat-data:/AstrBot/data
+      - napcat-config:/app/napcat/config
+      - napcat-ntqq:/app/.config/QQ
+    networks:
+      - astrbot_network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: iie-qq-bot-postgres
+    restart: always
+    environment:
+      - POSTGRES_DB=${PG_DATABASE:-iie_qq_bot}
+      - POSTGRES_USER=${PG_USER:-postgres}
+      - POSTGRES_PASSWORD=${PG_PASSWORD:-postgres}
+      - TZ=${GROUP_STATS_TIMEZONE:-Asia/Shanghai}
+    ports:
+      - 5432:5432
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-postgres} -d ${PG_DATABASE:-iie_qq_bot}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - astrbot_network
+
+networks:
+  astrbot_network:
+    driver: bridge
+
+volumes:
+  napcat-data:
+  napcat-config:
+  napcat-ntqq:
+  pg-data:
