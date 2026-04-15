@@ -13,7 +13,6 @@ group_stats 插件配置管理
 """
 import os
 from dataclasses import dataclass
-from typing import List
 
 
 @dataclass(slots=True)
@@ -29,10 +28,13 @@ class GroupStatsConfig:
     5. pg_password  登录密码
 
     II. 统计任务参数
-    1. group_ids    待统计群号列表（由 GROUP_STATS_GROUP_IDS 逗号分隔解析而来）
-    2. daily_time   每日执行时间，格式 HH:MM（如 "08:00"）
-    3. timezone     cron 时区名称（如 "Asia/Shanghai"）
-    4. api_timeout  调用 NapCat API 的超时秒数（当前为预留参数）
+    1. group_ids                     待统计群号列表
+    2. daily_time                    每日群人数/活跃度播报时间（HH:MM）
+    3. timezone                      时区名称（如 Asia/Shanghai）
+    4. api_timeout                   调用 NapCat API 的超时秒数（预留）
+    5. message_flush_interval_seconds 消息统计缓存刷盘周期（秒）
+    6. archive_time                  每日归档执行时间（HH:MM）
+    7. archive_retention_days        明细数据保留天数
     """
 
     pg_host: str
@@ -40,10 +42,13 @@ class GroupStatsConfig:
     pg_database: str
     pg_user: str
     pg_password: str
-    group_ids: List[int]
+    group_ids: list[int]
     daily_time: str
     timezone: str
     api_timeout: float
+    message_flush_interval_seconds: int
+    archive_time: str
+    archive_retention_days: int
 
     @property
     def database_url(self) -> str:
@@ -58,35 +63,40 @@ class GroupStatsConfig:
         )
 
 
-def _parse_group_ids(raw: str) -> List[int]:
+def _parse_group_ids(raw: str) -> list[int]:
     """
     解析逗号分隔的群号字符串为整数列表
 
     I.  处理空值，直接返回空列表
     II. 按逗号分割后逐项校验：
-        1. 过滤分割产生的空字符串（如末尾多余逗号）
-        2. 非纯数字项立即抛出 ValueError，通知调用方配置有误
-        3. 合法项转为 int 追加到结果列表
+        (1) 过滤分割产生的空字符串
+        (2) 非纯数字项立即抛出 ValueError
+        (3) 合法项转为 int 追加到结果列表
 
     @param raw - 原始字符串，如 "123456,234567"
     @returns 解析出的群号整数列表，输入为空时返回 []
     @raises ValueError 若存在非法群号（含非数字字符）
     """
-    result: List[int] = []
-    # I. 空输入快速返回，避免后续无效分割
+    result: list[int] = []
     if not raw.strip():
         return result
 
     for item in raw.split(","):
         value = item.strip()
-        # (1) 跳过分割后产生的空字符串（如 "123,,456" 中的双逗号情况）
         if not value:
             continue
-        # (2) 群号必须为纯数字，否则立即中断并指出错误位置
         if not value.isdigit():
             raise ValueError(f"GROUP_STATS_GROUP_IDS 包含非法群号: {value}")
         result.append(int(value))
     return result
+
+
+def _parse_positive_int(raw: str, default: int, env_name: str) -> int:
+    """解析正整数环境变量，非法值回退默认并抛错提示调用方修复配置。"""
+    value = int(raw)
+    if value <= 0:
+        raise ValueError(f"{env_name} 必须为正整数，当前值: {value}")
+    return value
 
 
 def load_config() -> GroupStatsConfig:
@@ -94,70 +104,9 @@ def load_config() -> GroupStatsConfig:
     从环境变量加载并返回 GroupStatsConfig 实例
 
     读取优先级：运行时环境变量 > NoneBot 已加载的 .env 文件默认值。
-    在 Docker Compose 场景中，可通过容器 environment 字段覆盖 .env 中的值。
 
     @returns 填充完毕的 GroupStatsConfig 实例
     """
-    pg_password: str
-    group_ids: List[int]
-    daily_time: str
-    timezone: str
-    api_timeout: float
-
-    @property
-    def database_url(self) -> str:
-        """
-        生成 SQLAlchemy asyncpg 异步连接字符串
-
-        @returns postgresql+asyncpg 格式的连接 URL，供 create_async_engine 使用
-        """
-        return (
-            f"postgresql+asyncpg://{self.pg_user}:{self.pg_password}"
-            f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
-        )
-
-
-def _parse_group_ids(raw: str) -> List[int]:
-    """
-    解析逗号分隔的群号字符串为整数列表
-
-    I.  处理空值，直接返回空列表
-    II. 按逗号分割后逐项校验：
-        1. 过滤分割产生的空字符串（如末尾多余逗号）
-        2. 非纯数字项立即抛出 ValueError，通知调用方配置有误
-        3. 合法项转为 int 追加到结果列表
-
-    @param raw - 原始字符串，如 "123456,234567"
-    @returns 解析出的群号整数列表，输入为空时返回 []
-    @raises ValueError 若存在非法群号（含非数字字符）
-    """
-    result: List[int] = []
-    # I. 空输入快速返回，避免后续无效分割
-    if not raw.strip():
-        return result
-
-    for item in raw.split(","):
-        value = item.strip()
-        # (1) 跳过分割后产生的空字符串（如 "123,,456" 中的双逗号情况）
-        if not value:
-            continue
-        # (2) 群号必须为纯数字，否则立即中断并指出错误位置
-        if not value.isdigit():
-            raise ValueError(f"GROUP_STATS_GROUP_IDS 包含非法群号: {value}")
-        result.append(int(value))
-    return result
-
-
-def load_config() -> GroupStatsConfig:
-    """
-    从环境变量加载并返回 GroupStatsConfig 实例
-
-    读取优先级：运行时环境变量 > NoneBot 已加载的 .env 文件默认值。
-    在 Docker Compose 场景中，可通过容器 environment 字段覆盖 .env 中的值。
-
-    @returns 填充完毕的 GroupStatsConfig 实例
-    """
-    # 环境变量优先，.env 作为兜底（NoneBot 启动时会加载 .env）
     return GroupStatsConfig(
         pg_host=os.getenv("PG_HOST", "127.0.0.1"),
         pg_port=int(os.getenv("PG_PORT", "5432")),
@@ -168,4 +117,15 @@ def load_config() -> GroupStatsConfig:
         daily_time=os.getenv("GROUP_STATS_DAILY_TIME", "08:00"),
         timezone=os.getenv("GROUP_STATS_TIMEZONE", "Asia/Shanghai"),
         api_timeout=float(os.getenv("GROUP_STATS_API_TIMEOUT", "10")),
+        message_flush_interval_seconds=_parse_positive_int(
+            os.getenv("GROUP_STATS_MESSAGE_FLUSH_INTERVAL_SECONDS", "60"),
+            default=60,
+            env_name="GROUP_STATS_MESSAGE_FLUSH_INTERVAL_SECONDS",
+        ),
+        archive_time=os.getenv("GROUP_STATS_ARCHIVE_TIME", "03:30"),
+        archive_retention_days=_parse_positive_int(
+            os.getenv("GROUP_STATS_ARCHIVE_RETENTION_DAYS", "30"),
+            default=30,
+            env_name="GROUP_STATS_ARCHIVE_RETENTION_DAYS",
+        ),
     )
