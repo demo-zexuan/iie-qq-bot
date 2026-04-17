@@ -1,0 +1,11 @@
+pkgs/bay/config.yaml
+.serena/
+openspec/
+AGENTS.md
+.kilocode/
+__pycache__/
+scripts/
+.codex/
+.claude/
+camel/
+.agent/

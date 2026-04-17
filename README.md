@@ -21,6 +21,11 @@
 8. 新增被 @ 随机坤语音回复（未命中更高优先级命令时触发）：
    - 优先使用 `kun/amr/` 预转换音频（AMR-NB, 8kHz, mono）；
    - 不可用时回退 `kun/converted/` 与 `kun/`。
+9. 新增群引流提示插件：
+   - 仅在指定群中生效；
+   - 命中关键词后引用回复原消息；
+   - 默认回复文案为“这个群禁止引流行为”；
+   - 不会自动 @ 发送者。
 
 ## 数据表结构
 
@@ -53,6 +58,20 @@
 - `GROUP_STATS_MESSAGE_FLUSH_INTERVAL_SECONDS` 活跃统计缓存刷盘间隔（秒）
 - `GROUP_STATS_ARCHIVE_TIME` 每日归档执行时间（`HH:MM`）
 - `GROUP_STATS_ARCHIVE_RETENTION_DAYS` 明细保留天数（超过后归档+清理）
+- `LOG_FILE_ENABLED` 是否开启文件日志（默认 `true`）
+- `LOG_DIR` 日志目录（默认 `logs`）
+- `LOG_FILE_NAME` 日志文件名（默认 `bot.log`）
+- `LOG_LEVEL` 日志级别（默认 `INFO`）
+- `LOG_ROTATION` 滚动策略（默认 `00:00`，即每天零点切分）
+- `LOG_RETENTION` 保留策略（默认 `14 days`）
+- `LOG_COMPRESSION` 压缩格式（默认 `zip`）
+- `CHART_FONT_PATH` 图表中文字体文件路径（可选，推荐树莓派填写 Noto CJK 字体绝对路径）
+- `GROUP_GUARD_ENABLED` 是否启用群引流提示插件（默认 `false`）
+- `GROUP_GUARD_GROUP_IDS` 启用检测的群号列表（逗号分隔）
+- `GROUP_GUARD_KEYWORDS` 引流关键词列表（逗号分隔，默认内置常见词）
+- `GROUP_GUARD_REPLY_TEXT` 命中后的回复文案（默认 `这个群禁止引流行为`）
+- `GROUP_GUARD_CASE_SENSITIVE` 是否区分大小写（默认 `false`）
+- `GROUP_GUARD_MAX_REPLIES_PER_MINUTE` 每个群每分钟最多自动回复条数（默认 `3`）
 
 示例：
 
@@ -63,7 +82,29 @@ GROUP_STATS_TIMEZONE=Asia/Shanghai
 GROUP_STATS_MESSAGE_FLUSH_INTERVAL_SECONDS=30
 GROUP_STATS_ARCHIVE_TIME=03:30
 GROUP_STATS_ARCHIVE_RETENTION_DAYS=30
+LOG_FILE_ENABLED=true
+LOG_DIR=logs
+LOG_FILE_NAME=bot.log
+LOG_LEVEL=INFO
+LOG_ROTATION=00:00
+LOG_RETENTION=14 days
+LOG_COMPRESSION=zip
+GROUP_GUARD_ENABLED=true
+GROUP_GUARD_GROUP_IDS=12345678,87654321
+GROUP_GUARD_KEYWORDS=引流,加群,vx,微信,私聊我,私信我,兼职,推广,代理
+GROUP_GUARD_REPLY_TEXT=这个群禁止引流行为
+GROUP_GUARD_CASE_SENSITIVE=false
+GROUP_GUARD_MAX_REPLIES_PER_MINUTE=3
+# 可选：强制指定图表中文字体文件，避免中文乱码
+# CHART_FONT_PATH=/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
 ```
+
+`GROUP_GUARD_*` 说明：
+
+- 插件默认关闭，只有在 `GROUP_GUARD_ENABLED=true` 且配置了 `GROUP_GUARD_GROUP_IDS` 后才会生效。
+- 命中逻辑为“消息纯文本中包含任一关键词”，适合处理常见引流短语。
+- 回复方式为 OneBot v11 的引用回复消息段，不会追加 `@发送者`。
+- 限频按群独立生效，`GROUP_GUARD_MAX_REPLIES_PER_MINUTE=3` 表示单个群在 60 秒内最多自动回复 3 次。
 
 ## 依赖安装
 
@@ -89,6 +130,14 @@ docker compose up -d postgres napcat
 
 - 地址示例：`ws://host.docker.internal:8080/onebot/v11/ws`
 - 若 NapCat 与 NoneBot 在同一 docker 网络内，请将 `host.docker.internal` 改为服务名或容器可达地址。
+- 建议仅保留 1 条 OneBot11 反向 WS 客户端，避免同一 `self_id` 重复连接触发 403。
+- 建议将 `reconnectInterval` / `heartInterval` 设为 `30000`（30s），减少异常期间重连风暴。
+
+常见 403 原因：
+
+- 已有同账号连接在线，再次建立连接（日志常见：`There's already a bot ... ignored`）。
+- 配置了多条反向 WS（例如历史遗留连接器未关闭）。
+- NoneBot 重启窗口内短时重连，随后恢复。
 
 ## 启动机器人
 

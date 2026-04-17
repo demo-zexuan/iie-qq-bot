@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from io import BytesIO
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -43,14 +44,21 @@ def _pick_font() -> FontProperties | None:
     II. 再尝试系统字体名称
     III. 均不可用时返回 None，交由调用方做降级文案
     """
+    custom_font = os.getenv("CHART_FONT_PATH", "").strip()
     local_fonts = [
+        Path(custom_font) if custom_font else None,
         Path("fonts/NotoSansCJK-Regular.ttc"),
         Path("fonts/NotoSansCJKsc-Regular.otf"),
         Path("fonts/SourceHanSansSC-Regular.otf"),
         Path("fonts/SimHei.ttf"),
+        Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+        Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
     ]
     for font_path in local_fonts:
-        if font_path.exists():
+        if font_path and font_path.exists():
             return FontProperties(fname=str(font_path))
 
     for font_name in _FONT_CANDIDATES:
@@ -61,6 +69,19 @@ def _pick_font() -> FontProperties | None:
         except Exception:
             continue
     return None
+
+
+def _display_name(name: str, fallback: str, has_zh_font: bool) -> str:
+    """无中文字体时避免绘制中文，直接回退到可稳定显示的标识。"""
+    if has_zh_font:
+        return name or fallback
+    if not name:
+        return fallback
+    try:
+        name.encode("ascii")
+        return name
+    except UnicodeEncodeError:
+        return fallback
 
 
 def _build_smoothed_series(
@@ -148,6 +169,7 @@ def render_group_trend_chart_png(
 
     font_prop = _pick_font()
     has_zh_font = font_prop is not None
+    group_display = _display_name(group_name, str(group_id), has_zh_font)
 
     times = [item[0] for item in points]
     time_nums = mdates.date2num(times)
@@ -243,9 +265,9 @@ def render_group_trend_chart_png(
             point_annot.set_fontproperties(font_prop)
 
     title_text = (
-        f"群人数波动曲线 - {group_name or group_id}"
+        f"群人数波动曲线 - {group_display}"
         if has_zh_font
-        else f"Group Member Trend - {group_name or group_id}"
+        else f"Group Member Trend - {group_display}"
     )
     x_label = "统计时间" if has_zh_font else "Time"
     y_label = "群成员人数" if has_zh_font else "Member Count"
@@ -353,6 +375,8 @@ def render_top1_hourly_distribution_png(
 
     font_prop = _pick_font()
     has_zh_font = font_prop is not None
+    group_display = _display_name(group_name, str(group_id), has_zh_font)
+    user_display = _display_name(user_name, str(user_id), has_zh_font)
 
     hours = [item[0] for item in points]
     counts = [item[1] for item in points]
@@ -384,14 +408,14 @@ def render_top1_hourly_distribution_png(
         peak_annot.set_fontproperties(font_prop)
 
     title_text = (
-        f"Top1 水群时段分布 - {group_name or group_id}"
+        f"Top1 水群时段分布 - {group_display}"
         if has_zh_font
-        else f"Top1 Hourly Distribution - {group_name or group_id}"
+        else f"Top1 Hourly Distribution - {group_display}"
     )
     subtitle = (
-        f"用户: {user_name} ({user_id})  日期: {stat_date.isoformat()}"
+        f"用户: {user_display} ({user_id})  日期: {stat_date.isoformat()}"
         if has_zh_font
-        else f"User: {user_name} ({user_id})  Date: {stat_date.isoformat()}"
+        else f"User: {user_display} ({user_id})  Date: {stat_date.isoformat()}"
     )
     x_label = "小时" if has_zh_font else "Hour"
     y_label = "消息数" if has_zh_font else "Message Count"
@@ -461,6 +485,7 @@ def render_group_hourly_trend_png(
 
     font_prop = _pick_font()
     has_zh_font = font_prop is not None
+    group_display = _display_name(group_name, str(group_id), has_zh_font)
 
     hours = np.asarray([item[0] for item in points], dtype=float)
     counts = np.asarray([item[1] for item in points], dtype=float)
@@ -496,9 +521,9 @@ def render_group_hourly_trend_png(
         peak_annot.set_fontproperties(font_prop)
 
     title_text = (
-        f"群整体活跃度趋势 - {group_name or group_id}"
+        f"群整体活跃度趋势 - {group_display}"
         if has_zh_font
-        else f"Group Hourly Activity Trend - {group_name or group_id}"
+        else f"Group Hourly Activity Trend - {group_display}"
     )
     x_label = "小时" if has_zh_font else "Hour"
     y_label = "消息数" if has_zh_font else "Message Count"

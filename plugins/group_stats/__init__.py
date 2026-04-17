@@ -208,6 +208,24 @@ async def _run_scheduled_task() -> None:
                 ),
             )
 
+            top10_lines = [
+                "📊 [定时任务] 今日水群榜（Top10）",
+                f"日期: {water_report.stat_date.isoformat()}",
+                f"总消息数: {water_report.total_message_count}",
+                (
+                    f"Top10 占比: {water_report.top10_ratio:.2%} "
+                    f"({water_report.top10_message_count}/{water_report.total_message_count})"
+                ),
+            ]
+            for user in water_report.top_users:
+                top10_lines.append(
+                    (
+                        f"{user.rank:>2}. {_format_user_display(user)} - {user.message_count} 条 | "
+                        f"首条 {_format_hms(user.first_message_at)} | 末条 {_format_hms(user.last_message_at)}"
+                    )
+                )
+            await bot.send_group_msg(group_id=group_id, message="\n".join(top10_lines))
+
             top1_distribution = await group_stats_service.get_user_hourly_distribution(
                 group_id=group_id,
                 user_id=top1_user.user_id,

@@ -1,0 +1,165 @@
+# Bay Production Config - Docker Compose (container_network mode)
+#
+# Bay runs in a Docker container and connects to Ship/Gull containers
+# via a shared Docker network using container IP (no host port mapping).
+#
+# ┌─────────────────────────────────────────────────────────┐
+# │  部署前必须修改的项 (搜索 CHANGE-ME)：                   │
+# │    1. security.api_key  — 设置强随机密钥                 │
+# └─────────────────────────────────────────────────────────┘
+
+server:
+  host: "0.0.0.0"
+  port: 8114
+
+database:
+  # SQLite for single-instance deployment.
+  # For HA / multi-instance, switch to PostgreSQL:
+  #   url: "postgresql+asyncpg://user:pass@db-host:5432/bay"
+  url: "sqlite+aiosqlite:///./data/bay.db"
+  echo: false
+
+driver:
+  type: docker
+
+  # Pull latest images when creating new sandboxes.
+  # Production recommendation: "always" ensures you always get the latest image.
+  image_pull_policy: always
+
+  docker:
+    socket: "unix:///var/run/docker.sock"
+
+    # Bay in container, Ship/Gull in container — use container network direct connect
+    connect_mode: container_network
+
+    # Shared network name (must match docker-compose.yaml network)
+    network: "bay-network"
+
+    # Disable host port mapping — sandbox containers don't need to be reachable
+    # from outside the Docker network, reducing attack surface.
+    publish_ports: false
+    host_port: null
+
+cargo:
+  root_path: "/var/lib/bay/cargos"
+  default_size_limit_mb: 1024
+  mount_path: "/workspace"
+
+security:
+  # CHANGE-ME: 设置一个强随机密钥 (e.g. `openssl rand -hex 32`)
+  api_key: "CHANGE-ME"
+  allow_anonymous: false
+
+# Container proxy environment injection.
+# When enabled, Bay injects HTTP(S)_PROXY and NO_PROXY into sandbox containers.
+proxy:
+  enabled: false
+  # http_proxy: "http://proxy.example.com:7890"
+  # https_proxy: "http://proxy.example.com:7890"
+  # Optional extra entries to append to default NO_PROXY list
+  # no_proxy: "my-internal.service"
+
+# Warm Pool — pre-start standby sandbox instances to reduce cold-start latency.
+# When a user creates a sandbox, Bay will first try to claim an available warm instance,
+# delivering near-instant startup instead of waiting for container boot.
+warm_pool:
+  enabled: true
+  warmup_queue_workers: 2          # Concurrent warmup workers
+  warmup_queue_max_size: 2       # Maximum queue depth
+  warmup_queue_drop_policy: "drop_newest"
+  warmup_queue_drop_alert_threshold: 50
+  interval_seconds: 30             # Pool maintenance scan interval
+  run_on_startup: true
+
+profiles:
+  # ── Standard Python sandbox ────────────────────────
+  - id: python-default
+    description: "Standard Python sandbox with filesystem and shell access"
+    image: "ghcr.io/astrbotdevs/shipyard-neo-ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "1g"
+    capabilities:
+      - filesystem  # includes upload/download
+      - shell
+      - python
+    idle_timeout: 1800  # 30 minutes
+    warm_pool_size: 1   # Keep 1 pre-warmed instance ready
+    # Environment variables injected into the runtime container (available in Python and Shell)
+    # Example: env: { TZ: "Asia/Shanghai", LANG: "en_US.UTF-8", CUSTOM_VAR: "value" }
+    env: {}
+    # Optional profile-level proxy override
+    # proxy:
+    #   enabled: false
+
+  # ── Data Science sandbox (more resources) ──────────
+  - id: python-data
+    description: "Data science sandbox with extra CPU and memory"
+    image: "ghcr.io/astrbotdevs/shipyard-neo-ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 2.0
+      memory: "4g"
+    capabilities:
+      - filesystem  # includes upload/download
+      - shell
+      - python
+    idle_timeout: 1800
+    warm_pool_size: 1
+    env: {}
+
+  # ── Browser + Python multi-container sandbox ───────
+  - id: browser-python
+    description: "Browser automation with Python backend"
+    containers:
+      - name: ship
+        image: "ghcr.io/astrbotdevs/shipyard-neo-ship:latest"
+        runtime_type: ship
+        runtime_port: 8123
+        resources:
+          cpus: 1.0
+          memory: "1g"
+        capabilities:
+          - python
+          - shell
+          - filesystem  # includes upload/download
+        primary_for:
+          - filesystem
+          - python
+          - shell
+        env: {}
+      - name: browser
+        image: "ghcr.io/astrbotdevs/shipyard-neo-gull:latest"
+        runtime_type: gull
+        runtime_port: 8115
+        resources:
+          cpus: 1.0
+          memory: "2g"
+        capabilities:
+          - browser
+        env: {}
+    idle_timeout: 1800
+    warm_pool_size: 1
+
+gc:
+  # Enable automatic GC for production
+  enabled: true
+  run_on_startup: true
+  interval_seconds: 300  # 5 minutes
+
+  # Instance identifier — MUST be unique in multi-instance deployments
+  instance_id: "bay-prod"
+
+  idle_session:
+    enabled: true
+  expired_sandbox:
+    enabled: true
+  orphan_cargo:
+    enabled: true
+  orphan_container:
+    # Enable in production to clean up leaked containers.
+    # Safe as long as instance_id is unique per Bay instance.
+    enabled: true

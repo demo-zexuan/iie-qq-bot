@@ -1,0 +1,63 @@
+# Bay Production Deployment - Docker Compose
+#
+# Self-contained deployment: Bay API gateway + shared Docker network.
+# Bay creates Ship/Gull sandbox containers dynamically via the Docker socket.
+#
+# Usage:
+#   1. Edit config.yaml (搜索 CHANGE-ME 修改必须项)
+#   2. docker compose up -d
+#   3. curl http://localhost:8114/health
+#
+# See README.md for full documentation.
+#
+# API Key Auto-Provisioning:
+#   On first start, Bay auto-generates an API key (sk-bay-...) and writes
+#   {BAY_DATA_DIR}/credentials.json. Companion services (e.g. AstrBot) can
+#   mount the bay-data volume as read-only to discover the key automatically.
+#   To inject a specific key, set BAY_API_KEY in the environment section.
+
+services:
+  bay:
+    image: ghcr.io/astrbotdevs/shipyard-neo-bay:latest
+    container_name: bay
+    restart: unless-stopped
+    ports:
+      - "8114:8114"
+    volumes:
+      # Docker socket — Bay creates sandbox containers dynamically
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Config file
+      - ./config.yaml:/app/config.yaml:ro
+      # SQLite database persistence
+      - bay-data:/app/data
+      # Cargo storage persistence
+      - bay-cargos:/var/lib/bay/cargos
+    environment:
+      - BAY_CONFIG_FILE=/app/config.yaml
+      - BAY_DATA_DIR=/app/data
+      # To inject a fixed API key instead of auto-generation:
+      # - BAY_API_KEY=sk-bay-your-key-here
+    networks:
+      - bay-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8114/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+networks:
+  bay-network:
+    name: bay-network
+    driver: bridge
+
+volumes:
+  bay-data:
+    name: bay-data
+  bay-cargos:
+    name: bay-cargos

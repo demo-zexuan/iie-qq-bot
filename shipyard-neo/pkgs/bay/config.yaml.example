@@ -1,0 +1,264 @@
+# Bay Configuration
+# This file can be placed at:
+# - ./config.yaml (development)
+# - /etc/bay/config.yaml (production)
+# - Or set BAY_CONFIG_FILE environment variable
+
+server:
+  host: "0.0.0.0"
+  port: 8114
+
+database:
+  # Phase 1: SQLite (single instance)
+  # For production: postgresql+asyncpg://user:pass@host/dbname
+  url: "sqlite+aiosqlite:///./bay.db"
+  echo: false
+
+driver:
+  type: docker  # docker | k8s
+
+  # Image pull policy for runtime containers (applies to both docker and k8s drivers).
+  # - always: Always pull the image before creating a container (ensures latest).
+  # - if_not_present: Only pull if the image is not available locally (default).
+  # - never: Never pull; fail if the image is not available locally.
+  image_pull_policy: if_not_present
+
+  docker:
+    socket: "unix:///var/run/docker.sock"
+
+    # Bay ↔ Runtime 连通模式：
+    # - host_port: Bay 跑在宿主机上（最常见）。通过 publish 端口映射访问 runtime。
+    # - container_network: Bay 跑在容器内且与 runtime 同网络，通过容器 IP 直连。
+    # - auto: 优先 container_network，失败回退 host_port。
+    connect_mode: host_port
+
+    # host_port 模式下 Bay 访问 runtime 的 host 地址
+    host_address: "127.0.0.1"
+
+    # 是否发布端口（host_port/auto 必须为 true 才能动态获取 HostPort）
+    publish_ports: true
+
+    # 固定宿主机端口（null/0 表示随机端口）
+    host_port: null
+
+    # container_network/auto 时可指定网络名；host_port 模式可不填
+    network: null
+
+cargo:
+  root_path: "/var/lib/bay/cargos"
+  default_size_limit_mb: 1024
+  mount_path: "/workspace"  # Fixed, do not change
+
+security:
+  # API Key authentication
+  #
+  # Bay supports two modes for API key configuration:
+  #
+  # 1. Auto-generation (default, recommended):
+  #    On first boot, Bay will:
+  #    - Auto-generate a key (sk-bay-...) and store its hash in the DB
+  #    - Write credentials.json for companion services (e.g., AstrBot)
+  #    Subsequent restarts will reuse the existing key from DB.
+  #
+  # 2. Environment variable override:
+  #    Set BAY_API_KEY=sk-bay-your-key to inject a specific key.
+  #    This seeds the key to DB on startup.
+
+  # Allow anonymous access (no authentication required)
+  # Development: true (default) - allows unauthenticated requests
+  # Production: false - requires valid API key
+  allow_anonymous: true
+
+  # Credentials file output directory (env: BAY_DATA_DIR, default: current directory)
+  # Auto-generated key is written to {BAY_DATA_DIR}/credentials.json
+
+  # Network blocklist (Phase 2)
+  blocked_hosts:
+    - "169.254.0.0/16"  # Cloud metadata
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+
+# Container proxy configuration
+# When enabled, proxy environment variables are injected into sandbox containers.
+proxy:
+  enabled: false
+  # http_proxy: "http://proxy.example.com:8080"
+  # https_proxy: "http://proxy.example.com:8080"
+  # Optional extra entries appended to default NO_PROXY list
+  # no_proxy: "my-internal-service.example.com"
+
+# Garbage Collection configuration
+# GC automatically cleans up idle sessions, expired sandboxes, and orphan resources.
+gc:
+  # Master switch for GC
+  enabled: true
+
+  # Run GC once immediately on startup (before entering background loop)
+  run_on_startup: true
+
+  # Interval between GC cycles (seconds)
+  interval_seconds: 300  # 5 minutes
+
+  # Instance identifier for OrphanContainerGC Strict mode.
+  # Containers with bay.instance_id != this value will NOT be touched.
+  # IMPORTANT: In multi-instance deployments, each instance MUST have a unique instance_id!
+  # Default derivation: BAY_GC__INSTANCE_ID env var → HOSTNAME → "bay"
+  instance_id: null  # Production: "bay-instance-1"
+
+  # Per-task configuration
+  # IdleSessionGC: Reclaims compute for sandboxes that have been idle beyond idle_timeout
+  idle_session:
+    enabled: true
+
+  # ExpiredSandboxGC: Deletes sandboxes that have exceeded their TTL (expires_at)
+  expired_sandbox:
+    enabled: true
+
+  # OrphanCargoGC: Cleans up managed cargos whose sandbox is deleted or missing
+  orphan_cargo:
+    enabled: true
+
+  # OrphanContainerGC: Cleans up orphan containers (DB record missing)
+  # DISABLED BY DEFAULT due to strict safety requirements.
+  # Only enable this if you understand the risks and have verified instance_id is unique.
+  orphan_container:
+    enabled: false
+
+# Warm Pool — pre-start standby sandbox instances to reduce cold-start latency.
+# When a user creates a sandbox, Bay first tries to claim an available warm instance;
+# on hit the response is near-instant. On miss, falls back to normal cold create.
+warm_pool:
+  enabled: true
+  warmup_queue_workers: 2          # Concurrent warmup workers (>= 1)
+  warmup_queue_max_size: 256       # Maximum queue depth (>= 1)
+  warmup_queue_drop_policy: "drop_newest"  # drop_newest | drop_oldest
+  warmup_queue_drop_alert_threshold: 50
+  interval_seconds: 30             # Pool maintenance scan interval
+  run_on_startup: true
+
+# Runtime profiles
+# These define the available sandbox configurations.
+#
+# Per-profile warm pool fields:
+#   warm_pool_size: N       — number of pre-warmed instances to maintain (0 = disabled)
+#   warm_rotate_ttl: 1800   — seconds before a warm instance is rotated out
+#   warm_claim_timeout_ms: 200  — max time (ms) to attempt claim before fallback
+profiles:
+  - id: python-default
+    image: "ship:latest"
+
+    # 运行时类型，决定使用哪个 Adapter（默认 ship）
+    # 支持的类型：ship、browser（未来）、gpu（未来）
+    runtime_type: ship
+
+    # runtime 容器内 HTTP 端口（Ship 当前默认是 8123，见 ship 镜像启动日志）
+    runtime_port: 8123
+
+    resources:
+      cpus: 1.0
+      memory: "1g"
+    capabilities:
+      - filesystem  # includes upload/download
+      - shell
+      - python
+    idle_timeout: 1800  # 30 minutes
+    warm_pool_size: 1   # Keep 1 pre-warmed instance ready (0 = disable for this profile)
+    
+    # Environment variables injected into the runtime container.
+    # These persist across calls and are available in both Python and Shell.
+    # Example:
+    # env:
+    #   TZ: "Asia/Shanghai"           # Set timezone
+    #   LANG: "en_US.UTF-8"           # Set locale
+    #   CUSTOM_VAR: "custom_value"    # Custom variable
+    env: {}
+    
+    # Optional: profile-level proxy override
+    # proxy:
+    #   enabled: false
+
+  - id: python-data
+    image: "ship:data"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 2.0
+      memory: "4g"
+    capabilities:
+      - filesystem  # includes upload/download
+      - shell
+      - python
+    idle_timeout: 1800
+    warm_pool_size: 1
+    env: {}
+
+  # Example: profile with custom proxy override
+  # - id: python-restricted
+  #   image: "ship:latest"
+  #   runtime_type: ship
+  #   runtime_port: 8123
+  #   resources:
+  #     cpus: 1.0
+  #     memory: "1g"
+  #   capabilities:
+  #     - filesystem
+  #     - shell
+  #     - python
+  #   idle_timeout: 1800
+  #   env: {}
+  #   proxy:
+  #     enabled: true
+  #     http_proxy: "http://restricted-proxy:3128"
+  #     https_proxy: "http://restricted-proxy:3128"
+
+  # Example: GPU profile (Phase 2+)
+  # - id: python-gpu
+  #   image: "ship:gpu"
+  #   runtime_type: ship
+  #   runtime_port: 8123
+  #   resources:
+  #     cpus: 4.0
+  #     memory: "16g"
+  #   capabilities:
+  #     - filesystem
+  #     - shell
+  #     - ipython
+  #   idle_timeout: 3600
+  #   warm_pool_size: 0   # GPU instances are expensive; disable warm pool
+  #   env:
+  #     CUDA_VISIBLE_DEVICES: "0"
+
+  # Multi-container profile: Browser + Python (Phase 2)
+  # Uses Ship for code execution and Gull for browser automation
+  # - id: browser-python
+  #   description: "Browser automation with Python backend"
+  #   containers:
+  #     - name: ship
+  #       image: "ship:latest"
+  #       runtime_type: ship
+  #       runtime_port: 8123
+  #       resources:
+  #         cpus: 1.0
+  #         memory: "1g"
+  #       capabilities:
+  #         - python
+  #         - shell
+  #         - filesystem
+  #       primary_for:
+  #         - filesystem
+  #         - python
+  #         - shell
+  #       env: {}
+  #     - name: browser
+  #       image: "gull:latest"
+  #       runtime_type: gull
+  #       runtime_port: 8115
+  #       resources:
+  #         cpus: 1.0
+  #         memory: "2g"
+  #       capabilities:
+  #         - browser
+  #       env: {}
+  #   idle_timeout: 1800
+  #   warm_pool_size: 1

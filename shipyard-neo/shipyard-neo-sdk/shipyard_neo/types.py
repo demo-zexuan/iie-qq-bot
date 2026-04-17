@@ -1,0 +1,476 @@
+"""Type definitions for Bay SDK.
+
+Pydantic models for request/response serialization.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class SandboxStatus(str, Enum):
+    """Sandbox status enum."""
+
+    IDLE = "idle"  # No running session
+    STARTING = "starting"  # Session is starting
+    READY = "ready"  # Session is running and ready
+    FAILED = "failed"  # Last session start failed
+    EXPIRED = "expired"  # TTL expired
+
+
+class SandboxInfo(BaseModel):
+    """Sandbox information."""
+
+    id: str
+    status: SandboxStatus
+    profile: str
+    cargo_id: str
+    capabilities: list[str]
+    created_at: datetime
+    expires_at: datetime | None
+    idle_expires_at: datetime | None
+    containers: list[RuntimeContainerInfo] | None = None
+
+
+class SandboxList(BaseModel):
+    """Sandbox list with pagination.
+
+    Design:
+    - SDK makes a single HTTP round-trip, returning current page items and next cursor.
+    - No hidden pagination state; user decides whether to continue fetching.
+    - Maps 1:1 with REST API for easy debugging.
+
+    Example:
+        cursor = None
+        while True:
+            page = await client.list_sandboxes(limit=50, cursor=cursor)
+            for sb in page.items:
+                process(sb)
+            if not page.next_cursor:
+                break
+            cursor = page.next_cursor
+    """
+
+    items: list[SandboxInfo]
+    next_cursor: str | None = None
+
+
+class CargoInfo(BaseModel):
+    """Cargo information."""
+
+    id: str
+    managed: bool
+    managed_by_sandbox_id: str | None
+    backend: str
+    size_limit_mb: int
+    created_at: datetime
+    last_accessed_at: datetime
+
+
+class CargoList(BaseModel):
+    """Cargo list with pagination."""
+
+    items: list[CargoInfo]
+    next_cursor: str | None = None
+
+
+class FileInfo(BaseModel):
+    """File/directory information."""
+
+    name: str
+    path: str
+    is_dir: bool
+    size: int | None = None  # None for directories
+    modified_at: datetime | None = None
+
+
+class PythonExecResult(BaseModel):
+    """Python execution result.
+
+    Attributes:
+        success: Whether execution completed without error
+        output: Combined stdout output
+        error: Error message if execution failed
+        data: Rich output data from IPython kernel, including:
+            - execution_count: Cell execution number
+            - output.text: Text output
+            - output.images: List of base64-encoded images
+    """
+
+    success: bool
+    output: str
+    error: str | None = None
+    data: dict[str, Any] | None = None
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    code: str | None = None
+
+
+class ShellExecResult(BaseModel):
+    """Shell execution result."""
+
+    success: bool
+    output: str
+    error: str | None = None
+    exit_code: int | None = None
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    command: str | None = None
+
+
+class BrowserExecResult(BaseModel):
+    """Browser automation execution result."""
+
+    success: bool
+    output: str
+    error: str | None = None
+    exit_code: int | None = None
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    trace_ref: str | None = None
+
+
+class BrowserBatchStepResult(BaseModel):
+    """Result of a single step in a browser batch execution."""
+
+    cmd: str
+    stdout: str
+    stderr: str
+    exit_code: int
+    step_index: int
+    duration_ms: int = 0
+
+
+class BrowserBatchExecResult(BaseModel):
+    """Browser batch execution result."""
+
+    results: list[BrowserBatchStepResult]
+    total_steps: int
+    completed_steps: int
+    success: bool
+    duration_ms: int = 0
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    trace_ref: str | None = None
+
+
+class BrowserSkillRunResult(BaseModel):
+    """Browser skill replay execution result."""
+
+    skill_key: str
+    release_id: str
+    execution_id: str
+    execution_time_ms: int
+    trace_ref: str | None = None
+    results: list[BrowserBatchStepResult]
+    total_steps: int
+    completed_steps: int
+    success: bool
+    duration_ms: int = 0
+
+
+class RuntimeContainerInfo(BaseModel):
+    """Runtime container status within a sandbox.
+
+    Returned in SandboxInfo.containers when the sandbox has an active session.
+    Includes real-time version and health information from each container.
+    """
+
+    name: str  # Container name, e.g. "ship", "browser"
+    runtime_type: str  # ship | gull
+    status: str  # running | stopped | failed
+    version: str | None = None  # Runtime version, e.g. "0.1.2"
+    capabilities: list[str]  # Capabilities provided by this container
+    healthy: bool | None = None  # Health status (None = not checked)
+
+
+class ContainerInfo(BaseModel):
+    """Container information within a profile."""
+
+    name: str
+    runtime_type: str
+    capabilities: list[str]
+    resources: dict[str, Any]
+
+
+class ProfileInfo(BaseModel):
+    """Profile information."""
+
+    id: str
+    image: str
+    resources: dict[str, Any]
+    capabilities: list[str]
+    idle_timeout: int
+    description: str | None = None
+    containers: list[ContainerInfo] | None = None
+
+
+class ProfileList(BaseModel):
+    """Profile list response."""
+
+    items: list[ProfileInfo]
+
+
+class ExecutionHistoryEntry(BaseModel):
+    """Execution history entry."""
+
+    id: str
+    session_id: str | None = None
+    exec_type: str
+    code: str
+    success: bool
+    execution_time_ms: int
+    output: str | None = None
+    error: str | None = None
+    payload_ref: str | None = None
+    description: str | None = None
+    tags: str | None = None
+    notes: str | None = None
+    learn_enabled: bool = False
+    learn_status: str | None = None
+    learn_error: str | None = None
+    learn_processed_at: datetime | None = None
+    created_at: datetime
+
+
+class ExecutionHistoryList(BaseModel):
+    """Execution history list response."""
+
+    entries: list[ExecutionHistoryEntry]
+    total: int
+
+
+class SkillCandidateStatus(str, Enum):
+    """Skill candidate lifecycle status."""
+
+    DRAFT = "draft"
+    EVALUATING = "evaluating"
+    PROMOTED = "promoted"
+    PROMOTED_CANARY = "promoted_canary"
+    PROMOTED_STABLE = "promoted_stable"
+    REJECTED = "rejected"
+    ROLLED_BACK = "rolled_back"
+
+
+class SkillReleaseStage(str, Enum):
+    """Skill release stage."""
+
+    CANARY = "canary"
+    STABLE = "stable"
+
+
+class SkillCandidateInfo(BaseModel):
+    """Skill candidate information."""
+
+    id: str
+    skill_key: str
+    scenario_key: str | None = None
+    payload_ref: str | None = None
+    skill_type: str = "code"
+    auto_release_eligible: bool = False
+    auto_release_reason: str | None = None
+    summary: str | None = None
+    usage_notes: str | None = None
+    preconditions: dict[str, Any] | None = None
+    postconditions: dict[str, Any] | None = None
+    source_execution_ids: list[str]
+    status: SkillCandidateStatus
+    latest_score: float | None = None
+    latest_pass: bool | None = None
+    last_evaluated_at: datetime | None = None
+    promotion_release_id: str | None = None
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    is_deleted: bool = False
+    deleted_at: datetime | None = None
+    deleted_by: str | None = None
+    delete_reason: str | None = None
+
+
+class SkillCandidateList(BaseModel):
+    """Skill candidate list response."""
+
+    items: list[SkillCandidateInfo]
+    total: int
+
+
+class SkillEvaluationInfo(BaseModel):
+    """Skill evaluation information."""
+
+    id: str
+    candidate_id: str
+    benchmark_id: str | None = None
+    score: float | None = None
+    passed: bool
+    report: str | None = None
+    evaluated_by: str | None = None
+    created_at: datetime
+
+
+class SkillReleaseInfo(BaseModel):
+    """Skill release information."""
+
+    id: str
+    skill_key: str
+    candidate_id: str
+    version: int
+    stage: SkillReleaseStage
+    is_active: bool
+    release_mode: str = "manual"
+    promoted_by: str | None = None
+    promoted_at: datetime
+    rollback_of: str | None = None
+    auto_promoted_from: str | None = None
+    health_window_end_at: datetime | None = None
+    upgrade_of_release_id: str | None = None
+    upgrade_reason: str | None = None
+    change_summary: str | None = None
+    is_deleted: bool = False
+    deleted_at: datetime | None = None
+    deleted_by: str | None = None
+    delete_reason: str | None = None
+
+
+class SkillReleaseList(BaseModel):
+    """Skill release list response."""
+
+    items: list[SkillReleaseInfo]
+    total: int
+
+
+class SkillReleaseHealth(BaseModel):
+    """Release health metrics and policy status."""
+
+    release_id: str
+    skill_key: str
+    stage: str
+    window_start_at: datetime
+    window_end_at: datetime
+    window_complete: bool
+    samples: int
+    success_rate: float
+    error_rate: float
+    p95_duration: int
+    baseline_success_rate: float
+    baseline_error_rate: float
+    baseline_samples: int
+    success_drop: float
+    error_rate_multiplier: float
+    healthy: bool
+    should_rollback: bool
+    rollback_reasons: list[str]
+    thresholds: dict[str, float]
+
+
+class SkillPayloadCreateInfo(BaseModel):
+    """Skill payload create response."""
+
+    payload_ref: str
+    kind: str
+
+
+class SkillPayloadInfo(BaseModel):
+    """Skill payload lookup response."""
+
+    payload_ref: str
+    kind: str
+    payload: dict[str, Any] | list[Any]
+
+
+# Internal request models (not exported)
+#
+# These are SDK-internal helpers to build request bodies consistently and
+# keep validation/typing centralized.
+
+
+class _CreateSandboxRequest(BaseModel):
+    """Internal: Create sandbox request body."""
+
+    profile: str = "python-default"
+    cargo_id: str | None = None
+    ttl: int | None = None
+
+
+class _ExtendTTLRequest(BaseModel):
+    """Internal: Extend TTL request body."""
+
+    extend_by: int = Field(..., ge=1)
+
+
+class _PythonExecRequest(BaseModel):
+    """Internal: Python exec request body."""
+
+    code: str
+    timeout: int = Field(default=30, ge=1, le=300)
+    include_code: bool = False
+    description: str | None = None
+    tags: str | None = None
+
+
+class _ShellExecRequest(BaseModel):
+    """Internal: Shell exec request body."""
+
+    command: str
+    timeout: int = Field(default=30, ge=1, le=300)
+    cwd: str | None = None
+    include_code: bool = False
+    description: str | None = None
+    tags: str | None = None
+
+
+class _BrowserExecRequest(BaseModel):
+    """Internal: Browser exec request body."""
+
+    cmd: str
+    timeout: int = Field(default=30, ge=1, le=300)
+    description: str | None = None
+    tags: str | None = None
+    learn: bool = False
+    include_trace: bool = False
+
+
+class _BrowserBatchExecRequest(BaseModel):
+    """Internal: Browser exec_batch request body."""
+
+    commands: list[str] = Field(..., min_length=1)
+    timeout: int = Field(default=60, ge=1, le=600)
+    stop_on_error: bool = True
+    description: str | None = None
+    tags: str | None = None
+    learn: bool = False
+    include_trace: bool = False
+
+
+class _BrowserSkillRunRequest(BaseModel):
+    """Internal: Browser skill replay request body."""
+
+    timeout: int = Field(default=60, ge=1, le=600)
+    stop_on_error: bool = True
+    include_trace: bool = False
+    description: str | None = None
+    tags: str | None = None
+
+
+class _SkillPayloadCreateRequest(BaseModel):
+    """Internal: Skill payload create request body."""
+
+    payload: dict[str, Any] | list[Any]
+    kind: str = Field(default="generic", min_length=1)
+
+
+class _FileWriteRequest(BaseModel):
+    """Internal: File write request body."""
+
+    path: str
+    content: str
+
+
+class _CreateCargoRequest(BaseModel):
+    """Internal: Create cargo request body."""
+
+    size_limit_mb: int | None = Field(default=None, ge=1, le=65536)

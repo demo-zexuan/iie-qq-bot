@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+data
+logs
+ntqq
+napcat
+shipyard-neo/data

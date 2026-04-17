@@ -123,7 +123,7 @@ _KUN_AUDIO_FILES: list[Path] = _scan_audio_files()
 # III. 处理器注册
 # priority=20：低于 group_stats 的 priority=10，确保具体指令优先匹配
 # block=True：本处理器匹配后，不再传递给更低优先级的处理器
-_kun_fallback = on_message(rule=to_me(), priority=20, block=True)
+# _kun_fallback = on_message(rule=to_me(), priority=20, block=True)
 
 
 @_kun_fallback.handle()
